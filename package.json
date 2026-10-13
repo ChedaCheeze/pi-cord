@@ -1,0 +1,20 @@
+{
+  "name": "picord",
+  "version": "2.0.0",
+  "description": "Standalone Discord gateway for Pi agents: one pi --print session per Discord channel/thread, skill-driven slash commands",
+  "main": "dist/index.js",
+  "bin": {
+    "picord": "./bin/picord.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.9.3"
+  }
+}
