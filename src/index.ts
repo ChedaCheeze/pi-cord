@@ -47,25 +47,20 @@ const EDIT_THRESHOLD = 75;
 /**
  * A message reply that accumulates streamed text and edits itself only when
  * >= EDIT_THRESHOLD new characters have arrived, clipping at Discord's
- * 2000-char limit.
+ * 2000-char limit. The first edit replaces the "Thinking..." placeholder
+ * with the actual output — the placeholder is never part of the final text.
  */
 class ThrottledReply {
   private total = '';
   private sentLen = 0;
 
-  constructor(
-    private readonly message: Message,
-    private readonly initial: string,
-  ) {
-    this.total = initial;
-    this.sentLen = initial.length;
-  }
+  constructor(private readonly message: Message) {}
 
   /** Feed a chunk; edits the reply when enough new text has accumulated. */
   async push(chunk: string): Promise<void> {
     this.total += chunk;
     if (this.total.length - this.sentLen < EDIT_THRESHOLD) return;
-    const visible = clipAt(this.total, this.sentLen, DISCORD_LIMIT);
+    const visible = clipAt(this.total, DISCORD_LIMIT);
     this.sentLen = visible.length;
     try {
       await this.message.edit(visible);
@@ -77,7 +72,7 @@ class ThrottledReply {
   /** Final edit with everything remaining (clipped to the limit). */
   async finish(): Promise<void> {
     if (this.total.length === this.sentLen) return;
-    const visible = clipAt(this.total, this.sentLen, DISCORD_LIMIT);
+    const visible = clipAt(this.total, DISCORD_LIMIT);
     this.sentLen = visible.length;
     try {
       await this.message.edit(visible);
@@ -92,16 +87,12 @@ class ThrottledReply {
 }
 
 /**
- * Grow `total` from `sentLen` up to the Discord limit. When the total
- * already exceeds the limit, the visible window slides forward so the most
- * recent text stays readable.
+ * Clip streamed text to the Discord limit. When the total exceeds the
+ * limit, the visible window slides forward so the most recent text stays
+ * readable.
  */
-function clipAt(total: string, sentLen: number, limit: number): string {
-  if (total.length <= limit) return total;
-  // Slide: keep the most recent `limit` chars, but never shrink below what
-  // was already sent (Discord would reject a shorter edit).
-  const window = total.slice(-limit);
-  return window.length >= sentLen ? window : total;
+function clipAt(total: string, limit: number): string {
+  return total.length <= limit ? total : total.slice(-limit);
 }
 
 // --- Gateway ---------------------------------------------------------------------
@@ -230,7 +221,7 @@ export async function startGateway(): Promise<void> {
       localCache.set(sessionId, { sessionId, text: '' });
 
       const handle = sessions.spawnPi({ sessionId, input });
-      const throttled = new ThrottledReply(reply, 'Thinking...');
+      const throttled = new ThrottledReply(reply);
       for await (const chunk of handle.stream) {
         await throttled.push(chunk);
         localCache.get(sessionId)!.text = throttled.text;

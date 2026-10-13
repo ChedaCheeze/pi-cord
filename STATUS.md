@@ -1,6 +1,7 @@
 # picord v2 — Status
 
-> Exact state as of **2026-07-09**. This doc is the hand-off for external review.
+> Exact state as of **2026-07-09**, updated **2026-10-13** (automated test suite added,
+> `Thinking...` streaming bug fixed, `verify-sessions.js` promoted into jest).
 > Read order: **Done → Missing → Errors (found & fixed) → What's Next**.
 
 ## What picord v2 is
@@ -42,6 +43,10 @@ gateway event; assertions below are from that log.
 | 11 | Token can't leak to VCS | `v2/.env` matches parent `.gitignore` (`.env`) — confirmed via `git check-ignore` |
 | 12 | Session reset + skill parsing | `resetSession(id)` JSONL deletion and `getLoadedSkills()` front-matter parse verified (15-check stage test) |
 | 13 | Clean build | `npm run build` → `tsc`, exit 0 |
+| 14 | `npm test` suite (jest) | `tests/gateway.test.ts` boots the real `bin/picord.js` against the in-repo mock (`tests/mock/discord-mock.ts` + `fake-pi.sh`) and asserts connect, command sync (base+skill), 75-char-throttled DM stream, `/status` defer+editReply, presence, thread archive/delete hooks (with real JSONL purge), graceful SIGTERM exit 0 — 7/7 green, fully offline |
+| 15 | Live thread-event path | `THREAD_CREATE` (with `GUILD_CREATE`) + injected `THREAD_UPDATE` (archive) and `THREAD_DELETE` dispatches in the mock — closes old gap #2 |
+| 16 | SessionManager unit tests | `tests/sessions.test.ts` — the 15 checks from `verify-sessions.js`, hermetized (fake-pi + temp `PI_SESSION_DIR`/`PI_SKILLS_DIR`): stream, kill-mid-run orphan check, resetSession suffix matching, frontmatter parse, killAll — 5/5 green |
+| 17 | Live login test (opt-in) | `tests/live.test.ts` — connects the real bot (READY + bot user) and disconnects; self-skips without `DISCORD_TOKEN`; run explicitly with `npm run test:live` |
 
 ### Project layout
 ```
@@ -55,11 +60,19 @@ v2/
 │   │                        #   resetSession, getLoadedSkills
 │   ├── interaction-handler.ts # deferReply-first command router (base + skills)
 │   └── commands-def.ts      # buildApplicationCommands (base + skill commands)
+├── tests/
+│   ├── gateway.test.ts      # offline integration: real bin/picord.js vs the mock
+│   ├── sessions.test.ts     # SessionManager unit tests (hermetic, no real pi)
+│   ├── live.test.ts         # opt-in real-Discord login test (skips w/o token)
+│   └── mock/
+│       ├── discord-mock.ts  # in-process REST+WS Discord mock (injectable
+│       │                    #   THREAD_UPDATE / THREAD_DELETE dispatches)
+│       └── fake-pi.sh       # scripted fake pi (exercises the edit throttle)
 ├── dist/                    # tsc output (committed)
 ├── package.json             # name: picord, bin: picord, main: dist/index.js
-├── tsconfig.json
+├── jest.config.js           # ts-jest; tests/**/*.test.ts
+├── tsconfig.json / tsconfig.test.json
 ├── package-lock.json
-├── verify-sessions.js       # stage-2 session test script (kept for regression)
 └── STATUS.md                # this file
 ```
 
@@ -72,19 +85,15 @@ reviewer knows the boundaries.
 
 1. **No `--help` / `--version` / CLI flags.** `bin/picord.js` has no flag parsing;
    any invocation without a token goes straight into the wizard. (Not a spec item.)
-2. **Live thread-event path not exercised by the mock.** The DM chat path is fully
-   verified. The `threadDelete` / `threadUpdate` (archive) handlers are code-reviewed
-   and rely on the already-tested `resetSession`, but the mock was driven via DM to
-   avoid the extra guild-registration work; a live `THREAD_DELETE`/`THREAD_UPDATE`
-   dispatch was not injected.
-3. **No automated `npm test`.** Verification was done through the ad-hoc `/tmp`
-   harness (mock + fake-pi), not a committed test suite.
-4. **No `.gitignore` inside `v2/`.** `v2/` inherits the parent `picord` repo's
+2. **No `.gitignore` inside `v2/`.** `v2/` inherits the parent `picord` repo's
    `.gitignore`. `dist/` is intentionally **committed** (matches the parent's
    convention). `node_modules/` and `.env` are ignored by the parent.
-5. **No `prepare`/postinstall build hook.** `dist/` is committed pre-built; a fresh
+3. **No `prepare`/postinstall build hook.** `dist/` is committed pre-built; a fresh
    clone runs without building, but source changes require `npm run build` before
    the new behavior is live.
+4. **Live login test not yet run with the Crash token.** `tests/live.test.ts`
+   compiles and self-skips; the real-READY assertion needs `DISCORD_TOKEN`
+   in `v2/.env` (then `npm run test:live`).
 
 ---
 
@@ -92,6 +101,13 @@ reviewer knows the boundaries.
 
 The bot code was correct throughout. Every failure below was a **protocol bug in the
 mock Discord server**, not in picord. Fixed so the connected-loop could be verified.
+
+**Product bug found & fixed (2026-10-13, by the new test suite):** the streamed
+chat reply kept the `"Thinking..."` placeholder **permanently prefixed** to the
+final message (`ThrottledReply` appended pi output to the placeholder text). Fixed
+in `src/index.ts` — the first edit now *replaces* the placeholder; the final
+message contains only the pi output. Regression-covered by
+tests/gateway.test.ts ("streams the DM reply with the 75-char edit throttle").
 
 | # | Error (symptom) | Root cause (in the mock) | Fix |
 |---|-----------------|--------------------------|-----|
@@ -115,13 +131,21 @@ Also added for observability (mock only): full REST request logging
 2. **Silence the `ephemeral` deprecation warning.** `deferReply({ ephemeral: false })`
    (kept exactly per spec) prints a discord.js deprecation notice per command; changing
    to `deferReply()` (same public behavior) removes it. Needs a spec-confirmation.
-3. **Move the test harness into the repo** (`/tmp/discord-mock.js`, `/tmp/fake-pi.sh`)
-   and wire a real `npm test` so CI/reviewers can reproduce the connected-loop.
-4. **Inject a live `THREAD_DELETE` / `THREAD_UPDATE`** in the mock to close gap #2.
-5. **Decide on `verify-sessions.js`** — promote it into the test suite or remove it.
-6. **(Optional)** `prepare` build hook so a fresh clone auto-builds `dist/`.
+3. **Run the live login test** with the Crash token (`v2/.env` + `npm run test:live`),
+   then consider extending it (send a real DM, assert the streamed reply).
+4. **(Optional)** `prepare` build hook so a fresh clone auto-builds `dist/`.
 
 ---
+
+## Test suite
+
+```bash
+cd /home/local/projects/picord/v2
+npm install          # if node_modules is absent
+npm run build        # rebuild dist/ from src/ (gateway.test.ts runs the committed dist)
+npm test             # offline: 12 tests (gateway + sessions); live test self-skips
+npm run test:live    # real Discord login test (needs DISCORD_TOKEN in v2/.env)
+```
 
 ## How to run
 

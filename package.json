@@ -7,14 +7,21 @@
     "picord": "./bin/picord.js"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "jest --detectOpenHandles --forceExit",
+    "test:live": "jest tests/live.test.ts --detectOpenHandles --forceExit"
   },
   "dependencies": {
     "discord.js": "^14.27.0",
     "dotenv": "^16.6.1"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.15.0",
-    "typescript": "^5.9.3"
+    "@types/ws": "^8.18.2",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.9.3",
+    "ws": "^8.22.0"
   }
 }
