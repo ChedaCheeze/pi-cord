@@ -144,9 +144,13 @@ async function startGateway() {
         if (!client.user)
             return;
         logInfo(`connected to Discord as ${client.user.tag}`);
-        // Rich presence.
+        // Rich presence: "Watching /commands — Powered by Pi Agent". The type
+        // must be Watching (3) — with Playing (0) Discord renders the
+        // double-verb "Playing Watching ...".
         try {
-            await client.user.setActivity('Watching /commands — Powered by Pi Agent', { type: 0 });
+            await client.user.setActivity('Watching /commands — Powered by Pi Agent', {
+                type: discord_js_1.ActivityType.Watching,
+            });
         }
         catch (err) {
             logWarn(`setActivity failed: ${String(err instanceof Error ? err.message : err)}`);

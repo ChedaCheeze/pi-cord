@@ -1,7 +1,9 @@
 # picord v2 — Status
 
-> Exact state as of **2026-07-09**, updated **2026-10-13** (automated test suite added,
-> `Thinking...` streaming bug fixed, `verify-sessions.js` promoted into jest).
+> Exact state as of **2026-07-09**, updated **2026-10-13**: automated test suite added,
+> `Thinking...` streaming bug fixed, `verify-sessions.js` promoted into jest, live login test
+> passed with the Crash token, **v2 deployed as the live systemd service (v1 retired)**,
+> presence `Watching` type fixed.
 > Read order: **Done → Missing → Errors (found & fixed) → What's Next**.
 
 ## What picord v2 is
@@ -46,7 +48,9 @@ gateway event; assertions below are from that log.
 | 14 | `npm test` suite (jest) | `tests/gateway.test.ts` boots the real `bin/picord.js` against the in-repo mock (`tests/mock/discord-mock.ts` + `fake-pi.sh`) and asserts connect, command sync (base+skill), 75-char-throttled DM stream, `/status` defer+editReply, presence, thread archive/delete hooks (with real JSONL purge), graceful SIGTERM exit 0 — 7/7 green, fully offline |
 | 15 | Live thread-event path | `THREAD_CREATE` (with `GUILD_CREATE`) + injected `THREAD_UPDATE` (archive) and `THREAD_DELETE` dispatches in the mock — closes old gap #2 |
 | 16 | SessionManager unit tests | `tests/sessions.test.ts` — the 15 checks from `verify-sessions.js`, hermetized (fake-pi + temp `PI_SESSION_DIR`/`PI_SKILLS_DIR`): stream, kill-mid-run orphan check, resetSession suffix matching, frontmatter parse, killAll — 5/5 green |
-| 17 | Live login test (opt-in) | `tests/live.test.ts` — connects the real bot (READY + bot user) and disconnects; self-skips without `DISCORD_TOKEN`; run explicitly with `npm run test:live` |
+| 17 | Live login test (opt-in) | `tests/live.test.ts` — connects the real bot (READY + bot user) and disconnects; self-skips without `DISCORD_TOKEN`; run explicitly with `npm run test:live`. **Passed with the Crash token** (READY in ~1s) |
+| 18 | Production deployment | v2 runs as the user systemd service `picord.service` (unit rewritten to `node /home/local/projects/picord/v2/bin/picord.js`, enabled, `Restart=always`); token from `v2/.env` (0600, gitignored). Verified live: connect as Crash#1198, 3 slash commands synced, real DM/thread/@mention replies through the local pi model |
+| 19 | v1 retirement | The old v1 daemon (running from a since-deleted clone dir) was stopped, its unit disabled (backup kept at `~/.config/systemd/user/picord.service.v1.bak`); no old processes remain |
 
 ### Project layout
 ```
@@ -109,6 +113,11 @@ in `src/index.ts` — the first edit now *replaces* the placeholder; the final
 message contains only the pi output. Regression-covered by
 tests/gateway.test.ts ("streams the DM reply with the 75-char edit throttle").
 
+**Product bug found & fixed (2026-10-13, in production):** rich presence was set
+with `{ type: 0 }` (Playing), so Discord rendered the double-verb
+"*Playing* Watching /commands — Powered by Pi Agent". Fixed to
+`ActivityType.Watching` (3); the gateway test now asserts the type, not just the text.
+
 | # | Error (symptom) | Root cause (in the mock) | Fix |
 |---|-----------------|--------------------------|-----|
 | 1 | `messageCreate` never fired for DM | MESSAGE_CREATE payload lacked `channel_type: 1`, so discord.js couldn't construct the DM channel and dropped the event | added `channel_type: 1` to the DM MESSAGE_CREATE |
@@ -131,9 +140,9 @@ Also added for observability (mock only): full REST request logging
 2. **Silence the `ephemeral` deprecation warning.** `deferReply({ ephemeral: false })`
    (kept exactly per spec) prints a discord.js deprecation notice per command; changing
    to `deferReply()` (same public behavior) removes it. Needs a spec-confirmation.
-3. **Run the live login test** with the Crash token (`v2/.env` + `npm run test:live`),
-   then consider extending it (send a real DM, assert the streamed reply).
-4. **(Optional)** `prepare` build hook so a fresh clone auto-builds `dist/`.
+3. **(Optional)** `prepare` build hook so a fresh clone auto-builds `dist/`.
+4. **(Optional)** extend `tests/live.test.ts` beyond login (send a real DM, assert the
+   streamed reply).
 
 ---
 
@@ -154,20 +163,18 @@ cd /home/local/projects/picord/v2
 npm install          # if node_modules is absent
 npm run build        # rebuild dist/ from src/
 
-# Production (real token):
+# Foreground (real token): the token comes from v2/.env
 picord                       # wizard if no token, else boot
 
-# Offline integration check (mock):
-P=8888
-MOCK_PORT=$P node /tmp/discord-mock.js &          # REST+WS mock on :$P
-sleep 1
-DISCORD_TOKEN='MTAwMDAwMDAwMDAwMDAwMDAx.x.y' \
-PICORD_API_BASE="http://127.0.0.1:$P" \
-PICORD_PI_CWD=/tmp PICORD_PI_BIN=/tmp/fake-pi.sh \
-PI_SKILLS_DIR=/tmp/test-skills \
-timeout 15 picord
-# mock stdout shows COMMANDS / CREATE / EDIT / INTERACT-CALLBACK / WEBHOOK-EDIT / PRESENCE
+# Production (this machine): user systemd service
+systemctl --user status  picord        # active (running) as Crash#1198
+systemctl --user restart picord        # after `npm run build`
+systemctl --user stop|disable picord   # full teardown
+journalctl --user -u picord -f         # follow logs
 ```
+
+The offline integration check no longer needs a manual harness — `npm test`
+runs the in-repo mock (`tests/mock/discord-mock.ts` + `fake-pi.sh`).
 
 ### Env vars
 | Var | Purpose |

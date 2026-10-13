@@ -8,6 +8,7 @@
  * up sessions when threads are deleted or archived.
  */
 import {
+  ActivityType,
   Client,
   GatewayIntentBits,
   MessageFlags,
@@ -163,9 +164,13 @@ export async function startGateway(): Promise<void> {
     if (!client.user) return;
     logInfo(`connected to Discord as ${client.user.tag}`);
 
-    // Rich presence.
+    // Rich presence: "Watching /commands — Powered by Pi Agent". The type
+    // must be Watching (3) — with Playing (0) Discord renders the
+    // double-verb "Playing Watching ...".
     try {
-      await client.user.setActivity('Watching /commands — Powered by Pi Agent', { type: 0 });
+      await client.user.setActivity('Watching /commands — Powered by Pi Agent', {
+        type: ActivityType.Watching,
+      });
     } catch (err) {
       logWarn(`setActivity failed: ${String(err instanceof Error ? err.message : err)}`);
     }

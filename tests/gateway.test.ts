@@ -153,12 +153,17 @@ describe('picord v2 gateway (offline, mocked Discord)', () => {
     );
   });
 
-  test('sets rich presence after ready', async () => {
+  test('sets rich presence after ready (Watching type, not Playing)', async () => {
+    const snap = () => mock.snapshot();
     await waitFor(
-      () => mock.snapshot().presenceActivities.some((a) => a.includes('Watching /commands')),
+      () => snap().presenceActivities.some((a) => a.includes('Watching /commands')),
       15_000,
       'presence activity',
     );
+    // ActivityType.Watching === 3. Type 0 (Playing) renders as the
+    // double-verb "Playing Watching ..." in the client.
+    const idx = snap().presenceActivities.findIndex((a) => a.includes('Watching /commands'));
+    expect(snap().presenceActivityTypes[idx]).toBe(3);
   });
 
   test('clears the local cache when the thread is archived', async () => {

@@ -51,8 +51,9 @@ export interface Snapshot {
   callbackTypes: number[];
   /** editReply bodies (PATCH /webhooks/.../messages/@original) */
   editReplyBodies: string[];
-  /** presence activity names sent by the bot (op 3) */
+  /** presence activities sent by the bot (op 3): names + types */
   presenceActivities: string[];
+  presenceActivityTypes: number[];
   /** raw gateway packets the client sent (op-level) */
   gatewayOps: number[];
 }
@@ -73,6 +74,7 @@ export class DiscordMock {
   private callbackTypes: number[] = [];
   private editReplyBodies: string[] = [];
   private presenceActivities: string[] = [];
+  private presenceActivityTypes: number[] = [];
   private gatewayOps: number[] = [];
 
   private newId(): string {
@@ -132,6 +134,7 @@ export class DiscordMock {
       callbackTypes: this.callbackTypes,
       editReplyBodies: this.editReplyBodies,
       presenceActivities: this.presenceActivities,
+      presenceActivityTypes: this.presenceActivityTypes,
       gatewayOps: this.gatewayOps,
     };
   }
@@ -270,7 +273,10 @@ export class DiscordMock {
       }
       if (d.op === 3) {
         const act = d.d && d.d.activities && d.d.activities[0];
-        if (act && act.name) this.presenceActivities.push(act.name);
+        if (act && act.name) {
+          this.presenceActivities.push(act.name);
+          this.presenceActivityTypes.push(act.type ?? -1);
+        }
         return;
       }
       if (d.op === 1) {
