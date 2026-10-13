@@ -31,7 +31,7 @@ describeLive('Discord Gateway Live Test', () => {
     const token = process.env.DISCORD_TOKEN;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('timed out waiting for READY (30s)')), 30_000);
-      client.once('ready', () => {
+      client.once('clientReady', () => {
         clearTimeout(timer);
         expect(client.user?.bot).toBe(true);
         resolve();
