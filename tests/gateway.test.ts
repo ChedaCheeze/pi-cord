@@ -2,7 +2,7 @@
  * Offline integration test: boots the REAL launcher (bin/picord.js ->
  * dist/index.js) against the in-process Discord mock and asserts the full
  * verified loop — connect, command sync (base + skill), streamed DM reply
- * with the 75-char edit throttle, /status defer + editReply, rich presence,
+ * with the 75-char edit throttle, /status defer + editReply, no-presence,
  * thread-archive + thread-delete memory hooks, and graceful SIGTERM shutdown.
  *
  * No token, no network: DISCORD_TOKEN is the mock's fake token and
@@ -153,17 +153,16 @@ describe('picord v2 gateway (offline, mocked Discord)', () => {
     );
   });
 
-  test('sets rich presence after ready (Watching type, not Playing)', async () => {
-    const snap = () => mock.snapshot();
+  test('sets no rich presence (status stays clean)', async () => {
+    // Once the gateway is up (commands synced) and a beat has passed for any
+    // (unexpected) presence op to arrive, none may have been sent.
     await waitFor(
-      () => snap().presenceActivities.some((a) => a.includes('Watching /commands')),
+      () => (mock.snapshot().commandNames?.length ?? 0) > 0,
       15_000,
-      'presence activity',
+      'commands synced',
     );
-    // ActivityType.Watching === 3. Type 0 (Playing) renders as the
-    // double-verb "Playing Watching ..." in the client.
-    const idx = snap().presenceActivities.findIndex((a) => a.includes('Watching /commands'));
-    expect(snap().presenceActivityTypes[idx]).toBe(3);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(mock.snapshot().presenceActivities).toEqual([]);
   });
 
   test('clears the local cache when the thread is archived', async () => {

@@ -139,22 +139,13 @@ async function startGateway() {
     process.on('unhandledRejection', (reason) => {
         logError(`unhandled rejection: ${String(reason instanceof Error ? reason.message : reason)}`);
     });
-    // --- Ready: presence + slash-command registration -------------------------
+    // --- Ready: slash-command registration ----------------------------------
     client.once('clientReady', async () => {
         if (!client.user)
             return;
         logInfo(`connected to Discord as ${client.user.tag}`);
-        // Rich presence: "Watching /commands — Powered by Pi Agent". The type
-        // must be Watching (3) — with Playing (0) Discord renders the
-        // double-verb "Playing Watching ...".
-        try {
-            await client.user.setActivity('Watching /commands — Powered by Pi Agent', {
-                type: discord_js_1.ActivityType.Watching,
-            });
-        }
-        catch (err) {
-            logWarn(`setActivity failed: ${String(err instanceof Error ? err.message : err)}`);
-        }
+        // Intentionally no rich presence: the bot shows no "Playing/Watching"
+        // activity in Discord.
         // Register slash commands (base + skills) globally.
         try {
             const commands = (0, commands_def_1.buildApplicationCommands)(sessions.getLoadedSkills());

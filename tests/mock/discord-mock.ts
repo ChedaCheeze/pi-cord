@@ -47,7 +47,7 @@ export interface Snapshot {
   creates: MessageCapture[];
   /** PATCH /channels/:id/messages/:mid (the streamed edits) */
   updates: MessageCapture[];
-  /** interaction callback types (25 = deferred acknowledgement) */
+  /** interaction callback types (5 = deferred channel message acknowledgement) */
   callbackTypes: number[];
   /** editReply bodies (PATCH /webhooks/.../messages/@original) */
   editReplyBodies: string[];

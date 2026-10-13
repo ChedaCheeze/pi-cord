@@ -49,7 +49,7 @@ gateway event; assertions below are from that log.
 | 15 | Live thread-event path | `THREAD_CREATE` (with `GUILD_CREATE`) + injected `THREAD_UPDATE` (archive) and `THREAD_DELETE` dispatches in the mock — closes old gap #2 |
 | 16 | SessionManager unit tests | `tests/sessions.test.ts` — the 15 checks from `verify-sessions.js`, hermetized (fake-pi + temp `PI_SESSION_DIR`/`PI_SKILLS_DIR`): stream, kill-mid-run orphan check, resetSession suffix matching, frontmatter parse, killAll — 5/5 green |
 | 17 | Live login test (opt-in) | `tests/live.test.ts` — connects the real bot (READY + bot user) and disconnects; self-skips without `DISCORD_TOKEN`; run explicitly with `npm run test:live`. **Passed with the Crash token** (READY in ~1s) |
-| 18 | Production deployment | v2 runs as the user systemd service `picord.service` (unit rewritten to `node /home/local/projects/picord/v2/bin/picord.js`, enabled, `Restart=always`); token from `v2/.env` (0600, gitignored). Verified live: connect as Crash#1198, 3 slash commands synced, real DM/thread/@mention replies through the local pi model |
+| 18 | Production deployment | v2 runs as the user systemd service `picord.service` (unit rewritten to `node /home/local/projects/picord/v2/bin/picord.js`, enabled, `Restart=always`); token from `v2/.env` (0600, gitignored). Verified live: connect as Crash#1198, 3 slash commands synced, real DM/thread/@mention replies through the local pi model. **No rich presence** — the bot shows no Playing/Watching status in Discord |
 | 19 | v1 retirement | The old v1 daemon (running from a since-deleted clone dir) was stopped, its unit disabled (backup kept at `~/.config/systemd/user/picord.service.v1.bak`); no old processes remain |
 
 ### Project layout
@@ -115,8 +115,9 @@ tests/gateway.test.ts ("streams the DM reply with the 75-char edit throttle").
 
 **Product bug found & fixed (2026-10-13, in production):** rich presence was set
 with `{ type: 0 }` (Playing), so Discord rendered the double-verb
-"*Playing* Watching /commands — Powered by Pi Agent". Fixed to
-`ActivityType.Watching` (3); the gateway test now asserts the type, not just the text.
+"*Playing* Watching /commands — Powered by Pi Agent". Resolution: the presence was
+**removed entirely** — the bot intentionally sets no activity. Regression-covered by
+tests/gateway.test.ts ("sets no rich presence").
 
 | # | Error (symptom) | Root cause (in the mock) | Fix |
 |---|-----------------|--------------------------|-----|
