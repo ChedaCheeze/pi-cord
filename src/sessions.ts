@@ -7,7 +7,7 @@
  * is purged with resetSession(). Skills are discovered from SKILL.md files
  * under ~/.pi/agent/skills/.
  */
-import { spawn, type ChildProcess } from 'child_process';
+import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -30,7 +30,7 @@ export interface PiStreamOptions {
 export interface PiStreamHandle {
   /** Streamed stdout chunks as they arrive. */
   stream: AsyncGenerator<string, void, unknown>;
-  /** Exit code (null when still running). */
+  /** Exit code (null when still running or killed). */
   exitCode: () => number | null;
   /** stderr captured so far (for error headlines). */
   stderr: () => string;
@@ -39,6 +39,34 @@ export interface PiStreamHandle {
    * The generator settles with whatever was printed before the kill.
    */
   kill(): void;
+  /** True once kill() (or the hard timeout) has fired. */
+  killed: () => boolean;
+}
+
+/** Thinking levels accepted by `pi --thinking` (used for validation + pickers). */
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+/** A saved pi session (from listSessions), for the /resume picker. */
+export interface SessionInfo {
+  /** Session id (the JSONL suffix after the last underscore). */
+  id: string;
+  /** Last-modified time of the (newest) file for this id. */
+  mtime: Date;
+  /** Size in bytes of that file. */
+  size: number;
+  /** First user message text (truncated to 80 chars), '' when unreadable. */
+  label: string;
+}
+
+/** A model row from `pi --list-models`, for the /model picker. */
+export interface ModelInfo {
+  /** `provider/id` pattern — exactly what `pi --model <pattern>` accepts. */
+  id: string;
+  provider: string;
+  context: string;
+  thinking: string;
+  images: string;
 }
 
 export interface SkillInfo {
@@ -65,6 +93,43 @@ function skillsRoot(): string {
   return process.env.PI_SKILLS_DIR
     ? path.resolve(process.env.PI_SKILLS_DIR)
     : path.join(os.homedir(), '.pi', 'agent', 'skills');
+}
+
+/**
+ * First user message of a session JSONL (picker label). Reads only the head
+ * of the file; returns '' when no user message is found in the first 64KB.
+ */
+function firstUserMessage(file: string): string {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(64 * 1024);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    for (const line of buf.toString('utf8', 0, n).split('\n')) {
+      if (!line.trim()) continue;
+      let d: { type?: string; message?: { role?: string; content?: unknown } };
+      try {
+        d = JSON.parse(line);
+      } catch {
+        continue; // partial tail line or non-JSON
+      }
+      if (d.type !== 'message' || d.message?.role !== 'user') continue;
+      const c = d.message.content;
+      const text =
+        typeof c === 'string'
+          ? c
+          : Array.isArray(c)
+            ? c
+                .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text: unknown }).text) : ''))
+                .join(' ')
+            : '';
+      const clean = text.replace(/\s+/g, ' ').trim();
+      if (clean) return clean.length > 80 ? `${clean.slice(0, 80)}\u2026` : clean;
+    }
+  } catch {
+    /* unreadable file */
+  }
+  return '';
 }
 
 /**
@@ -96,6 +161,15 @@ export class SessionManager {
   private readonly cwd: string;
   /** Every pi child spawned since boot (shutdown must kill all of them). */
   private readonly children = new Set<ChildProcess>();
+  /** Live runs per session id (for abortSession / /stop). */
+  private readonly running = new Map<string, Set<PiStreamHandle>>();
+  /** Per-channel overrides (in-memory: a bot restart resets them). */
+  private readonly thinkingBySession = new Map<string, string>();
+  private readonly modelBySession = new Map<string, string>();
+  /** Channel → attached pi session id (set by /resume; replaces --session-id). */
+  private readonly attachedByChannel = new Map<string, string>();
+  /** Cache for listModels() — `pi --list-models` startup is not free. */
+  private modelCache: { at: number; models: ModelInfo[] } | null = null;
 
   constructor(opts?: { piBin?: string; cwd?: string }) {
     this.piBin = opts?.piBin ?? (process.env.PICORD_PI_BIN?.trim() || 'pi');
@@ -107,13 +181,24 @@ export class SessionManager {
   }
 
   /**
-   * Spawn `pi --print --session-id <sessionId> <input>` and return a handle
-   * whose async generator yields stdout chunks as they arrive.
+   * Spawn `pi --print [--thinking <level>] [--model <pattern>]
+   * (--session <attached> | --session-id <sessionId>) <input>` and return a
+   * handle whose async generator yields stdout chunks as they arrive.
+   * Per-channel overrides (thinking, model, attached session) are applied
+   * automatically from their setters.
    */
   spawnPi(opts: PiStreamOptions): PiStreamHandle {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
-    const args = ['--print', '--session-id', opts.sessionId, opts.input];
+    const args: string[] = ['--print'];
+    const thinking = this.thinkingBySession.get(opts.sessionId);
+    if (thinking) args.push('--thinking', thinking);
+    const model = this.modelBySession.get(opts.sessionId);
+    if (model) args.push('--model', model);
+    const attached = this.attachedByChannel.get(opts.sessionId);
+    if (attached) args.push('--session', attached);
+    else args.push('--session-id', opts.sessionId);
+    args.push(opts.input);
 
     let child: ChildProcess;
     try {
@@ -167,11 +252,78 @@ export class SessionManager {
     child.on('close', (code: number | null): void => {
       exitCode = code;
       this.children.delete(child);
+      this.running.get(opts.sessionId)?.delete(handle);
     });
 
     const stream = this.makeStream(child);
 
-    return { stream, exitCode: () => exitCode, stderr: () => stderrBuf, kill };
+    const handle: PiStreamHandle = {
+      stream,
+      exitCode: () => exitCode,
+      stderr: () => stderrBuf,
+      kill,
+      killed: () => killed,
+    };
+    let live = this.running.get(opts.sessionId);
+    if (!live) {
+      live = new Set();
+      this.running.set(opts.sessionId, live);
+    }
+    live.add(handle);
+    return handle;
+  }
+
+  /**
+   * Abort every live pi run for this session id (the /stop command — the
+   * Esc equivalent). SIGTERM now, SIGKILL after the grace period. Returns
+   * the number of runs aborted (0 when nothing was running).
+   */
+  abortSession(sessionId: string): number {
+    const live = this.running.get(sessionId);
+    if (!live || live.size === 0) return 0;
+    const n = live.size;
+    for (const h of [...live]) h.kill();
+    live.clear();
+    return n;
+  }
+
+  // --- Per-channel overrides (in-memory, reset on bot restart) ------------
+
+  setThinking(sessionId: string, level: string): void {
+    this.thinkingBySession.set(sessionId, level);
+  }
+
+  thinkingFor(sessionId: string): string | undefined {
+    return this.thinkingBySession.get(sessionId);
+  }
+
+  setModel(sessionId: string, pattern: string): void {
+    this.modelBySession.set(sessionId, pattern);
+  }
+
+  modelFor(sessionId: string): string | undefined {
+    return this.modelBySession.get(sessionId);
+  }
+
+  /** Attach an existing pi session to this channel (next spawn uses `--session <id>`). */
+  attachSession(channelId: string, sessionId: string): void {
+    this.attachedByChannel.set(channelId, sessionId);
+  }
+
+  attachedFor(channelId: string): string | undefined {
+    return this.attachedByChannel.get(channelId);
+  }
+
+  detachSession(channelId: string): void {
+    this.attachedByChannel.delete(channelId);
+  }
+
+  /** Drop all per-channel state for a vanished place (thread deleted). */
+  forget(sessionId: string): void {
+    this.thinkingBySession.delete(sessionId);
+    this.modelBySession.delete(sessionId);
+    this.attachedByChannel.delete(sessionId);
+    this.running.get(sessionId)?.clear();
   }
 
   /**
@@ -315,6 +467,86 @@ export class SessionManager {
   /** Number of pi children currently running. */
   get runningCount(): number {
     return this.children.size;
+  }
+
+  /**
+   * Saved pi sessions, newest first (the /resume picker). Scans all per-cwd
+   * subdirectories of the session store; when one session id has several
+   * timestamped files (recreated after /clear), only its newest counts.
+   * Labels are the session's first user message, when readable.
+   */
+  listSessions(limit = 25): SessionInfo[] {
+    const root = sessionsRoot();
+    const byId = new Map<string, SessionInfo>();
+    if (!fs.existsSync(root)) return [];
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(root);
+    } catch {
+      return [];
+    }
+    for (const entry of entries) {
+      const dir = path.join(root, entry);
+      let files: string[];
+      try {
+        if (!fs.statSync(dir).isDirectory()) continue;
+        files = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const f of files) {
+        if (!f.endsWith('.jsonl')) continue;
+        const base = f.replace(/\.jsonl$/, '');
+        const i = base.lastIndexOf('_');
+        const id = i >= 0 ? base.slice(i + 1) : base;
+        const full = path.join(dir, f);
+        let st: fs.Stats;
+        try {
+          st = fs.statSync(full);
+        } catch {
+          continue;
+        }
+        const existing = byId.get(id);
+        if (existing && existing.mtime.getTime() >= st.mtimeMs) continue;
+        byId.set(id, { id, mtime: new Date(st.mtimeMs), size: st.size, label: firstUserMessage(full) });
+      }
+    }
+    return [...byId.values()].sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
+  }
+
+  /**
+   * Available models from `pi --list-models` (the /model picker). Runs the
+   * real pi binary synchronously; results are cached for 5 minutes. Returns
+   * [] when the list cannot be produced (callers fall back to a hint).
+   */
+  listModels(): ModelInfo[] {
+    const TTL = 5 * 60_000;
+    if (this.modelCache && Date.now() - this.modelCache.at < TTL) return this.modelCache.models;
+    let raw = '';
+    try {
+      raw = execFileSync(this.piBin, ['--list-models'], {
+        cwd: this.cwd,
+        encoding: 'utf8',
+        timeout: 20_000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      return [];
+    }
+    const models: ModelInfo[] = [];
+    for (const line of raw.split('\n')) {
+      const cols = line.trim().split(/\s{2,}/);
+      if (cols.length < 2 || cols[0] === 'provider' || !line.trim()) continue;
+      models.push({
+        id: cols[1],
+        provider: cols[0],
+        context: cols[2] ?? '',
+        thinking: cols[4] ?? '',
+        images: cols[5] ?? '',
+      });
+    }
+    this.modelCache = { at: Date.now(), models };
+    return models;
   }
 
   /**

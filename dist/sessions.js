@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SessionManager = void 0;
+exports.SessionManager = exports.THINKING_LEVELS = void 0;
 /**
  * SessionManager — direct lifecycle of Pi CLI child processes.
  *
@@ -47,6 +47,8 @@ const child_process_1 = require("child_process");
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+/** Thinking levels accepted by `pi --thinking` (used for validation + pickers). */
+exports.THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_GRACE_MS = 3000;
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
@@ -60,6 +62,46 @@ function skillsRoot() {
     return process.env.PI_SKILLS_DIR
         ? path.resolve(process.env.PI_SKILLS_DIR)
         : path.join(os.homedir(), '.pi', 'agent', 'skills');
+}
+/**
+ * First user message of a session JSONL (picker label). Reads only the head
+ * of the file; returns '' when no user message is found in the first 64KB.
+ */
+function firstUserMessage(file) {
+    try {
+        const fd = fs.openSync(file, 'r');
+        const buf = Buffer.alloc(64 * 1024);
+        const n = fs.readSync(fd, buf, 0, buf.length, 0);
+        fs.closeSync(fd);
+        for (const line of buf.toString('utf8', 0, n).split('\n')) {
+            if (!line.trim())
+                continue;
+            let d;
+            try {
+                d = JSON.parse(line);
+            }
+            catch {
+                continue; // partial tail line or non-JSON
+            }
+            if (d.type !== 'message' || d.message?.role !== 'user')
+                continue;
+            const c = d.message.content;
+            const text = typeof c === 'string'
+                ? c
+                : Array.isArray(c)
+                    ? c
+                        .map((b) => (b && typeof b === 'object' && 'text' in b ? String(b.text) : ''))
+                        .join(' ')
+                    : '';
+            const clean = text.replace(/\s+/g, ' ').trim();
+            if (clean)
+                return clean.length > 80 ? `${clean.slice(0, 80)}\u2026` : clean;
+        }
+    }
+    catch {
+        /* unreadable file */
+    }
+    return '';
 }
 /**
  * Minimal YAML frontmatter reader for SKILL.md (name/description only —
@@ -89,6 +131,15 @@ class SessionManager {
     cwd;
     /** Every pi child spawned since boot (shutdown must kill all of them). */
     children = new Set();
+    /** Live runs per session id (for abortSession / /stop). */
+    running = new Map();
+    /** Per-channel overrides (in-memory: a bot restart resets them). */
+    thinkingBySession = new Map();
+    modelBySession = new Map();
+    /** Channel → attached pi session id (set by /resume; replaces --session-id). */
+    attachedByChannel = new Map();
+    /** Cache for listModels() — `pi --list-models` startup is not free. */
+    modelCache = null;
     constructor(opts) {
         this.piBin = opts?.piBin ?? (process.env.PICORD_PI_BIN?.trim() || 'pi');
         this.cwd = opts?.cwd ?? (process.env.PICORD_PI_CWD?.trim() || process.cwd());
@@ -97,13 +148,28 @@ class SessionManager {
         return this.cwd;
     }
     /**
-     * Spawn `pi --print --session-id <sessionId> <input>` and return a handle
-     * whose async generator yields stdout chunks as they arrive.
+     * Spawn `pi --print [--thinking <level>] [--model <pattern>]
+     * (--session <attached> | --session-id <sessionId>) <input>` and return a
+     * handle whose async generator yields stdout chunks as they arrive.
+     * Per-channel overrides (thinking, model, attached session) are applied
+     * automatically from their setters.
      */
     spawnPi(opts) {
         const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
-        const args = ['--print', '--session-id', opts.sessionId, opts.input];
+        const args = ['--print'];
+        const thinking = this.thinkingBySession.get(opts.sessionId);
+        if (thinking)
+            args.push('--thinking', thinking);
+        const model = this.modelBySession.get(opts.sessionId);
+        if (model)
+            args.push('--model', model);
+        const attached = this.attachedByChannel.get(opts.sessionId);
+        if (attached)
+            args.push('--session', attached);
+        else
+            args.push('--session-id', opts.sessionId);
+        args.push(opts.input);
         let child;
         try {
             // Own process group so kill() takes down pi's tool subprocesses too.
@@ -153,9 +219,68 @@ class SessionManager {
         child.on('close', (code) => {
             exitCode = code;
             this.children.delete(child);
+            this.running.get(opts.sessionId)?.delete(handle);
         });
         const stream = this.makeStream(child);
-        return { stream, exitCode: () => exitCode, stderr: () => stderrBuf, kill };
+        const handle = {
+            stream,
+            exitCode: () => exitCode,
+            stderr: () => stderrBuf,
+            kill,
+            killed: () => killed,
+        };
+        let live = this.running.get(opts.sessionId);
+        if (!live) {
+            live = new Set();
+            this.running.set(opts.sessionId, live);
+        }
+        live.add(handle);
+        return handle;
+    }
+    /**
+     * Abort every live pi run for this session id (the /stop command — the
+     * Esc equivalent). SIGTERM now, SIGKILL after the grace period. Returns
+     * the number of runs aborted (0 when nothing was running).
+     */
+    abortSession(sessionId) {
+        const live = this.running.get(sessionId);
+        if (!live || live.size === 0)
+            return 0;
+        const n = live.size;
+        for (const h of [...live])
+            h.kill();
+        live.clear();
+        return n;
+    }
+    // --- Per-channel overrides (in-memory, reset on bot restart) ------------
+    setThinking(sessionId, level) {
+        this.thinkingBySession.set(sessionId, level);
+    }
+    thinkingFor(sessionId) {
+        return this.thinkingBySession.get(sessionId);
+    }
+    setModel(sessionId, pattern) {
+        this.modelBySession.set(sessionId, pattern);
+    }
+    modelFor(sessionId) {
+        return this.modelBySession.get(sessionId);
+    }
+    /** Attach an existing pi session to this channel (next spawn uses `--session <id>`). */
+    attachSession(channelId, sessionId) {
+        this.attachedByChannel.set(channelId, sessionId);
+    }
+    attachedFor(channelId) {
+        return this.attachedByChannel.get(channelId);
+    }
+    detachSession(channelId) {
+        this.attachedByChannel.delete(channelId);
+    }
+    /** Drop all per-channel state for a vanished place (thread deleted). */
+    forget(sessionId) {
+        this.thinkingBySession.delete(sessionId);
+        this.modelBySession.delete(sessionId);
+        this.attachedByChannel.delete(sessionId);
+        this.running.get(sessionId)?.clear();
     }
     /**
      * Async generator over the child's stdout. Chunks are split on newlines
@@ -305,6 +430,94 @@ class SessionManager {
     /** Number of pi children currently running. */
     get runningCount() {
         return this.children.size;
+    }
+    /**
+     * Saved pi sessions, newest first (the /resume picker). Scans all per-cwd
+     * subdirectories of the session store; when one session id has several
+     * timestamped files (recreated after /clear), only its newest counts.
+     * Labels are the session's first user message, when readable.
+     */
+    listSessions(limit = 25) {
+        const root = sessionsRoot();
+        const byId = new Map();
+        if (!fs.existsSync(root))
+            return [];
+        let entries;
+        try {
+            entries = fs.readdirSync(root);
+        }
+        catch {
+            return [];
+        }
+        for (const entry of entries) {
+            const dir = path.join(root, entry);
+            let files;
+            try {
+                if (!fs.statSync(dir).isDirectory())
+                    continue;
+                files = fs.readdirSync(dir);
+            }
+            catch {
+                continue;
+            }
+            for (const f of files) {
+                if (!f.endsWith('.jsonl'))
+                    continue;
+                const base = f.replace(/\.jsonl$/, '');
+                const i = base.lastIndexOf('_');
+                const id = i >= 0 ? base.slice(i + 1) : base;
+                const full = path.join(dir, f);
+                let st;
+                try {
+                    st = fs.statSync(full);
+                }
+                catch {
+                    continue;
+                }
+                const existing = byId.get(id);
+                if (existing && existing.mtime.getTime() >= st.mtimeMs)
+                    continue;
+                byId.set(id, { id, mtime: new Date(st.mtimeMs), size: st.size, label: firstUserMessage(full) });
+            }
+        }
+        return [...byId.values()].sort((a, b) => b.mtime.getTime() - a.mtime.getTime()).slice(0, limit);
+    }
+    /**
+     * Available models from `pi --list-models` (the /model picker). Runs the
+     * real pi binary synchronously; results are cached for 5 minutes. Returns
+     * [] when the list cannot be produced (callers fall back to a hint).
+     */
+    listModels() {
+        const TTL = 5 * 60_000;
+        if (this.modelCache && Date.now() - this.modelCache.at < TTL)
+            return this.modelCache.models;
+        let raw = '';
+        try {
+            raw = (0, child_process_1.execFileSync)(this.piBin, ['--list-models'], {
+                cwd: this.cwd,
+                encoding: 'utf8',
+                timeout: 20_000,
+                stdio: ['ignore', 'pipe', 'ignore'],
+            });
+        }
+        catch {
+            return [];
+        }
+        const models = [];
+        for (const line of raw.split('\n')) {
+            const cols = line.trim().split(/\s{2,}/);
+            if (cols.length < 2 || cols[0] === 'provider' || !line.trim())
+                continue;
+            models.push({
+                id: cols[1],
+                provider: cols[0],
+                context: cols[2] ?? '',
+                thinking: cols[4] ?? '',
+                images: cols[5] ?? '',
+            });
+        }
+        this.modelCache = { at: Date.now(), models };
+        return models;
     }
     /**
      * Forcefully kill every running pi child process (SIGTERM, then SIGKILL

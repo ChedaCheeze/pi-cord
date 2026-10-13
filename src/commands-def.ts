@@ -1,30 +1,70 @@
 /**
  * Discord slash-command schema for picord v2.
  *
- * Base commands (/clear, /status, /model) are built with SlashCommandBuilder;
+ * Base commands are built with SlashCommandBuilder;
  * buildApplicationCommands(skills) additionally turns every loaded Pi skill
  * into its own slash command so skills are first-class from the Discord
  * menu. Descriptions must be 1-100 chars for the Discord API; an empty skill
  * description falls back to the skill name.
+ *
+ * Picker convention: /thinking, /model and /resume take an OPTIONAL argument.
+ * With the argument the value is applied directly; without it the command
+ * replies with a native Discord select menu (see interaction-handler.ts).
  */
 import { SlashCommandBuilder } from 'discord.js';
-import type { SkillInfo } from './sessions';
+import { THINKING_LEVELS, type SkillInfo } from './sessions';
 
 const NAME_RE = /^[a-z0-9_-]{1,32}$/;
 const DESC_RE = /^.{1,100}$/;
 
-/** Base commands every picord v2 instance registers. */
-function baseCommands(): SlashCommandBuilder[] {
+/** Base commands every picord v2 instance registers (as API JSON). */
+function baseCommands(): CommandJSON[] {
   return [
     new SlashCommandBuilder()
       .setName('clear')
-      .setDescription('Delete the saved session memory for this channel'),
+      .setDescription('Delete the saved session memory for this channel (alias of /new)')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('new')
+      .setDescription('Start a fresh session: clears saved memory and any attached session')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('stop')
+      .setDescription('Abort the pi run currently live in this channel (Esc)')
+      .toJSON(),
     new SlashCommandBuilder()
       .setName('status')
-      .setDescription('Show loaded skills and session information'),
+      .setDescription('Show skills, session info, and this channel\u2019s overrides')
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('thinking')
+      .setDescription('Show or set the thinking level (menu when omitted)')
+      .addStringOption((opt) =>
+        opt
+          .setName('level')
+          .setDescription('Thinking level (optional — omitted shows a picker)')
+          .setRequired(false)
+          .addChoices(...THINKING_LEVELS.map((l) => ({ name: l, value: l }))),
+      )
+      .toJSON(),
     new SlashCommandBuilder()
       .setName('model')
-      .setDescription('Ask Pi which model it is using'),
+      .setDescription('Show or set the model for this channel (menu when omitted)')
+      .addStringOption((opt) =>
+        opt
+          .setName('pattern')
+          .setDescription('Model pattern, e.g. llama.cpp/unsloth/Qwen (optional — omitted shows a picker)')
+          .setRequired(false),
+      )
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('resume')
+      .setDescription('Attach an existing pi session to this channel (menu when omitted)')
+      .addStringOption((opt) =>
+        opt.setName('id').setDescription('Session id or unique prefix (optional — omitted shows a picker)').setRequired(false),
+      )
+      .toJSON(),
+    new SlashCommandBuilder().setName('help').setDescription('List the picord commands').toJSON(),
   ];
 }
 
@@ -63,5 +103,5 @@ export function skillCommands(skills: SkillInfo[]): CommandJSON[] {
  * REST.put(Routes.applicationCommands(appId), { body }).
  */
 export function buildApplicationCommands(skills: SkillInfo[]): CommandJSON[] {
-  return [...baseCommands().map((c) => c.toJSON()), ...skillCommands(skills)];
+  return [...baseCommands(), ...skillCommands(skills)];
 }

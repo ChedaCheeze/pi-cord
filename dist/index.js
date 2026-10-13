@@ -159,7 +159,16 @@ async function startGateway() {
     });
     // --- Slash commands -----------------------------------------------------------
     client.on('interactionCreate', (interaction) => {
-        if (!interaction.isChatInputCommand() || shuttingDown)
+        if (shuttingDown)
+            return;
+        // Select menus from the /thinking, /model and /resume pickers.
+        if (interaction.isStringSelectMenu()) {
+            void (0, interaction_handler_1.handleSelectMenu)(interaction).catch((err) => {
+                logError(`picker routing failed: ${String(err instanceof Error ? err.message : err)}`);
+            });
+            return;
+        }
+        if (!interaction.isChatInputCommand())
             return;
         void (0, interaction_handler_1.handleInteraction)(interaction, sessions).catch((err) => {
             logError(`interaction routing failed: ${String(err instanceof Error ? err.message : err)}`);
@@ -201,7 +210,17 @@ async function startGateway() {
             }
             await throttled.finish();
             const code = handle.exitCode();
-            if (code !== 0 && !throttled.text.trim()) {
+            if (handle.killed()) {
+                // Aborted via /stop (or the hard timeout): keep whatever streamed and
+                // mark the message — the Esc equivalent in the terminal.
+                const kept = throttled.text.trimEnd();
+                const marked = kept
+                    ? `${kept}\n\n\u23f1 *stopped*`
+                    : '\u23f1 *stopped — no output yet.*';
+                await reply.edit(clipAt(marked, DISCORD_LIMIT)).catch(() => undefined);
+                logInfo(`run stopped in ${sessionId} (${kept.length} chars kept)`);
+            }
+            else if (code !== 0 && !throttled.text.trim()) {
                 const headline = handle
                     .stderr()
                     .split(/\r?\n/)
@@ -220,6 +239,7 @@ async function startGateway() {
     client.on('threadDelete', (thread) => {
         // Purge volatile memory for a deleted thread.
         const deleted = sessions.resetSession(thread.id);
+        sessions.forget(thread.id);
         localCache.delete(thread.id);
         logInfo(`thread ${thread.name} deleted — session purged (${deleted} file(s))`);
     });

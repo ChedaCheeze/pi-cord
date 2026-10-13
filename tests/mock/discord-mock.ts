@@ -49,8 +49,14 @@ export interface Snapshot {
   updates: MessageCapture[];
   /** interaction callback types (5 = deferred channel message acknowledgement) */
   callbackTypes: number[];
+  /** callback contents (confirmation replies to component interactions) */
+  callbackContents: string[];
   /** editReply bodies (PATCH /webhooks/.../messages/@original) */
   editReplyBodies: string[];
+  /** select-menu customIds attached via editReply components */
+  menuCustomIds: string[];
+  /** option labels of menus attached via editReply components */
+  menuLabels: string[];
   /** presence activities sent by the bot (op 3): names + types */
   presenceActivities: string[];
   presenceActivityTypes: number[];
@@ -72,13 +78,19 @@ export class DiscordMock {
   private updates: MessageCapture[] = [];
   private commandNames: string[] | null = null;
   private callbackTypes: number[] = [];
+  private callbackContents: string[] = [];
   private editReplyBodies: string[] = [];
+  private menuCustomIds: string[] = [];
+  private menuLabels: string[] = [];
   private presenceActivities: string[] = [];
   private presenceActivityTypes: number[] = [];
   private gatewayOps: number[] = [];
 
   private newId(): string {
-    return (900000000000000000 + this.nextId++).toString();
+    // BigInt: 9e17 exceeds Number.MAX_SAFE_INTEGER, so plain-number
+    // arithmetic silently collapsed every id to the same string (colliding
+    // DMs then re-emitted a cached bot message and were ignored).
+    return (900000000000000000n + BigInt(this.nextId++)).toString();
   }
 
   /** Start the mock on an ephemeral port; resolves with the base URL. */
@@ -124,6 +136,83 @@ export class DiscordMock {
     this.dispatch({ id: threadId, ...patch }, 'THREAD_UPDATE');
   }
 
+  /**
+   * Send an INTERACTION_CREATE of the given type. `channel` is an object in
+   * the current API shape — discord.js 14.27 reads channelId from
+   * data.channel?.id, so omitting it makes interaction.channelId null and
+   * per-channel overrides would key against the wrong id.
+   */
+  injectInteraction(
+    type: number,
+    data: Record<string, unknown>,
+    topLevel: Record<string, unknown> = {},
+  ): string {
+    const id = `int-${(this.nextId++).toString().padStart(2, '0')}`;
+    this.dispatch(
+      {
+        id,
+        application_id: APP_ID,
+        type,
+        data,
+        channel: { id: DM_CHANNEL_ID },
+        channel_id: DM_CHANNEL_ID,
+        guild_id: null,
+        member: { user: { id: USER_ID, username: 'tester', bot: false, discriminator: '0007' } },
+        entitlements: [], // BaseInteraction constructor calls .reduce on this
+        authorizing_integration_owners: {}, // indexed by integration type
+        token: `int-token-${id}`,
+        version: 1,
+        ...topLevel,
+      },
+      'INTERACTION_CREATE',
+    );
+    return id;
+  }
+
+  /**
+   * Inject a select-menu click (component_type 3) on a picker customId.
+   * Note: InteractionType.MessageComponent === 3 in the current
+   * discord-api-types enum, and the interaction's `message` field is a
+   * top-level payload member (sibling of `data`), not part of `data.data`.
+   */
+  injectSelectMenu(customId: string, value: string): string {
+    return this.injectInteraction(
+      3, // InteractionType.MessageComponent
+      { custom_id: customId, component_type: 3, values: [value] },
+      {
+        message: {
+          id: '999000000000000001',
+          channel_id: DM_CHANNEL_ID,
+          author: this.botAuthor(),
+          content: '',
+          timestamp: new Date().toISOString(),
+          mentions: [],
+        },
+      },
+    );
+  }
+
+  /** Inject a DM MESSAGE_CREATE (any content; the bot answers every DM). */
+  injectDM(content: string, channelId: string = DM_CHANNEL_ID): string {
+    const id = this.newId();
+    this.dispatch(
+      {
+        id,
+        guild_id: null, // DM: no guild
+        channel_type: 1, // 1 = DM
+        channel_id: channelId,
+        author: { id: USER_ID, username: 'tester', bot: false, discriminator: '0007' },
+        member: null,
+        content,
+        timestamp: new Date().toISOString(),
+        mentions: [],
+        mention_everyone: false,
+      },
+      'MESSAGE_CREATE',
+    );
+    return id;
+  }
+
   snapshot(): Snapshot {
     return {
       identified: this.identified,
@@ -132,7 +221,10 @@ export class DiscordMock {
       creates: this.creates,
       updates: this.updates,
       callbackTypes: this.callbackTypes,
+      callbackContents: this.callbackContents,
       editReplyBodies: this.editReplyBodies,
+      menuCustomIds: this.menuCustomIds,
+      menuLabels: this.menuLabels,
       presenceActivities: this.presenceActivities,
       presenceActivityTypes: this.presenceActivityTypes,
       gatewayOps: this.gatewayOps,
@@ -219,6 +311,9 @@ export class DiscordMock {
       if (req.method === 'POST' && /\/interactions\/[^/]+\/[^/]+\/callback/.test(url)) {
         const parsed = JSON.parse(body || '{}');
         this.callbackTypes.push(parsed.type);
+        if (parsed.data && typeof parsed.data.content === 'string') {
+          this.callbackContents.push(parsed.data.content);
+        }
         // A real Discord 204 has no JSON content-type (prevents a
         // "Unexpected end of JSON input" in @discordjs/rest).
         res.statusCode = 204;
@@ -229,6 +324,15 @@ export class DiscordMock {
       if (req.method === 'PATCH' && /\/webhooks\/[^/]+\/[^/]+\/messages\//.test(url)) {
         const parsed = JSON.parse(body || '{}');
         this.editReplyBodies.push(parsed.content ?? '');
+        // Capture select menus attached to the reply (pickers).
+        for (const row of parsed.components ?? []) {
+          for (const comp of row.components ?? []) {
+            if (typeof comp.custom_id === 'string') this.menuCustomIds.push(comp.custom_id);
+            for (const opt of comp.options ?? []) {
+              if (typeof opt.label === 'string') this.menuLabels.push(opt.label);
+            }
+          }
+        }
         res.end(JSON.stringify(this.messageShape('reply-id', THREAD_ID, parsed.content ?? '', null)));
         return;
       }

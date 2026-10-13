@@ -19,7 +19,7 @@ import {
 } from 'discord.js';
 import { SessionManager, type SkillInfo } from './sessions';
 import { buildApplicationCommands } from './commands-def';
-import { handleInteraction } from './interaction-handler';
+import { handleInteraction, handleSelectMenu } from './interaction-handler';
 
 // --- ANSI terminal logging ---------------------------------------------------
 
@@ -180,7 +180,15 @@ export async function startGateway(): Promise<void> {
   // --- Slash commands -----------------------------------------------------------
 
   client.on('interactionCreate', (interaction) => {
-    if (!interaction.isChatInputCommand() || shuttingDown) return;
+    if (shuttingDown) return;
+    // Select menus from the /thinking, /model and /resume pickers.
+    if (interaction.isStringSelectMenu()) {
+      void handleSelectMenu(interaction).catch((err: unknown) => {
+        logError(`picker routing failed: ${String(err instanceof Error ? err.message : err)}`);
+      });
+      return;
+    }
+    if (!interaction.isChatInputCommand()) return;
     void handleInteraction(interaction, sessions).catch((err: unknown) => {
       logError(`interaction routing failed: ${String(err instanceof Error ? err.message : err)}`);
     });
@@ -225,7 +233,16 @@ export async function startGateway(): Promise<void> {
       await throttled.finish();
 
       const code = handle.exitCode();
-      if (code !== 0 && !throttled.text.trim()) {
+      if (handle.killed()) {
+        // Aborted via /stop (or the hard timeout): keep whatever streamed and
+        // mark the message — the Esc equivalent in the terminal.
+        const kept = throttled.text.trimEnd();
+        const marked = kept
+          ? `${kept}\n\n\u23f1 *stopped*`
+          : '\u23f1 *stopped — no output yet.*';
+        await reply.edit(clipAt(marked, DISCORD_LIMIT)).catch(() => undefined);
+        logInfo(`run stopped in ${sessionId} (${kept.length} chars kept)`);
+      } else if (code !== 0 && !throttled.text.trim()) {
         const headline = handle
           .stderr()
           .split(/\r?\n/)
@@ -245,6 +262,7 @@ export async function startGateway(): Promise<void> {
   client.on('threadDelete', (thread: ThreadChannel) => {
     // Purge volatile memory for a deleted thread.
     const deleted = sessions.resetSession(thread.id);
+    sessions.forget(thread.id);
     localCache.delete(thread.id);
     logInfo(`thread ${thread.name} deleted — session purged (${deleted} file(s))`);
   });

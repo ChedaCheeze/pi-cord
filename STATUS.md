@@ -1,9 +1,10 @@
 # picord v2 — Status
 
-> Exact state as of **2026-07-09**, updated **2026-10-13**: automated test suite added,
+> Exact state as of **2026-07-09**, updated **2026-10-13 (b)**: automated test suite added,
 > `Thinking...` streaming bug fixed, `verify-sessions.js` promoted into jest, live login test
-> passed with the Crash token, **v2 deployed as the live systemd service (v1 retired)**,
-> presence `Watching` type fixed.
+> passed with the Crash token, **v2 deployed as the live systemd service (v1 retired)**, presence
+> removed entirely, and the full **8-command Discord-native command set with select-menu
+> pickers** implemented (stop / new / thinking / model / resume / help / status / clear).
 > Read order: **Done → Missing → Errors (found & fixed) → What's Next**.
 
 ## What picord v2 is
@@ -14,12 +15,15 @@ as a global Node.js binary (`picord`) that:
 1. Manages its own Discord WebSocket (discord.js v14).
 2. Spawns local `pi --print --session-id <channel_id>` child processes to do the
    actual intelligence work.
-3. Exposes skill-driven slash commands (base `/clear` `/status` `/model` + one per
-   installed Pi skill).
+3. Exposes Discord-native slash commands: an 8-command base set
+   (`/clear` `/new` `/stop` `/status` `/thinking` `/model` `/resume` `/help`,
+   choice-based ones backed by 60 s select-menu pickers) plus one command per
+   installed Pi skill.
 4. Streams pi output back into a Discord message with throttled edits
    (≥75 new chars, capped at Discord's 2000-char limit).
 5. Offers an interactive token setup wizard, graceful shutdown (zombie-safe),
-   rich presence, and ANSI-colored terminal logging.
+   and ANSI-colored terminal logging. (Rich presence was removed by design —
+   the bot sets no Discord activity.)
 
 ---
 
@@ -36,7 +40,7 @@ gateway event; assertions below are from that log.
 | 2 | Command registration (base + skills) | `synced 4 slash commands with Discord (global)`; mock `COMMANDS ["clear","status","model","myskill"]` |
 | 3 | Streaming chat loop | mock `CREATE "Thinking..."` then 4 incremental `EDIT`s (126→248→346→353 chars) at the 75-char throttle, then final flush; bot log `replied in dm (351 chars, exit 0)` |
 | 4 | Slash-command interaction (`/status`) | mock `INTERACT-CALLBACK {"type":5}` (defer) then `WEBHOOK-EDIT` with correct status body (workspace, in-flight count, skill list) |
-| 5 | Rich presence | gateway `op 3` PresenceUpdate from the bot: `{"activity":{"name":"Watching /commands — Powered by Pi Agent"}}` |
+| 5 | No rich presence | **removed by design** — regression test asserts no `op 3` PresenceUpdate is ever sent (the bot shows no Playing/Watching status) |
 | 6 | Graceful shutdown / no zombies | `SIGTERM → shutting down (killing 0 pi run(s)) → shutdown complete`; clean exit |
 | 7 | Token fail-fast | bad/absent token → red `fatal` log, `exit 1` |
 | 8 | Token setup wizard | env var, piped token, and `.env` write (mode `0600`) all verified |
@@ -49,8 +53,13 @@ gateway event; assertions below are from that log.
 | 15 | Live thread-event path | `THREAD_CREATE` (with `GUILD_CREATE`) + injected `THREAD_UPDATE` (archive) and `THREAD_DELETE` dispatches in the mock — closes old gap #2 |
 | 16 | SessionManager unit tests | `tests/sessions.test.ts` — the 15 checks from `verify-sessions.js`, hermetized (fake-pi + temp `PI_SESSION_DIR`/`PI_SKILLS_DIR`): stream, kill-mid-run orphan check, resetSession suffix matching, frontmatter parse, killAll — 5/5 green |
 | 17 | Live login test (opt-in) | `tests/live.test.ts` — connects the real bot (READY + bot user) and disconnects; self-skips without `DISCORD_TOKEN`; run explicitly with `npm run test:live`. **Passed with the Crash token** (READY in ~1s) |
-| 18 | Production deployment | v2 runs as the user systemd service `picord.service` (unit rewritten to `node /home/local/projects/picord/v2/bin/picord.js`, enabled, `Restart=always`); token from `v2/.env` (0600, gitignored). Verified live: connect as Crash#1198, 3 slash commands synced, real DM/thread/@mention replies through the local pi model. **No rich presence** — the bot shows no Playing/Watching status in Discord |
+| 18 | Production deployment | v2 runs as the user systemd service `picord.service` (unit rewritten to `node /home/local/projects/picord/v2/bin/picord.js`, enabled, `Restart=always`); token from `v2/.env` (0600, gitignored). Verified live: connect as Crash#1198, **8 slash commands synced** (re-verified after the command-set rollout), real DM/thread/@mention replies through the local pi model. **No rich presence** — the bot shows no Playing/Watching status in Discord |
 | 19 | v1 retirement | The old v1 daemon (running from a since-deleted clone dir) was stopped, its unit disabled (backup kept at `~/.config/systemd/user/picord.service.v1.bak`); no old processes remain |
+| 20 | **8-command set + pickers** | `/clear` `/new` `/stop` `/status` `/thinking` `/model` `/resume` `/help`. Choice commands show a native select menu when the optional arg is omitted (60 s expiry, 25-option cap, ephemeral confirmation, expired-menu annotation); direct args always work. Gateway tests cover: `/help` body, `/new` file purge, `/thinking` menu→pick→`--thinking` in the next spawn argv, `/model` menu→pick→`--model` (list parsed from `pi --list-models`, 5-min cache), `/resume` menu→pick→`--session <id>` replacing `--session-id` (labels = first user message of each saved session, newest first) |
+| 21 | **`/stop` (Esc equivalent)** | kills every live pi run for the channel's session (process group, SIGTERM→SIGKILL 2 s grace); the streamed reply keeps its partial output plus a `⏱ *stopped*` marker. Gateway test: mid-run kill confirmed by pgrep + stopped-marker edit; `abortSession` unit test covers counts |
+| 22 | **Per-channel session overrides** | thinking level, model pattern, and attached session are in-memory, per channel (DMs share the `dm` key, matching message routing; `interaction.guildId` distinguishes DMs without a channel cache); reset on bot restart by design. Unit tests assert the exact spawn argv with/without each override; `/status` shows this channel's current overrides |
+| 23 | Session browsing | `listSessions()` — scans `~/.pi/agent/sessions/*/*.jsonl` (honours `PI_SESSION_DIR`), dedupes by session id (newest mtime wins), labels from the first user message (first 64 KB), newest-first, capped. Unit-tested incl. dedupe + limit |
+| 24 | Mock parity with discord.js 14.27 | the in-repo mock now speaks the current API shape: `InteractionType.MessageComponent === 3`, top-level `message` member on component interactions, `channel: {id}` objects, callback-content + select-menu (customId/labels) capture, `injectDM()`/`injectInteraction()`/`injectSelectMenu()`, BigInt message ids (plain-number ids exceeded `MAX_SAFE_INTEGER` and silently collided) |
 
 ### Project layout
 ```
@@ -60,18 +69,30 @@ v2/
 ├── src/
 │   ├── index.ts             # gateway: client, intents, streaming reply, thread
 │   │                        #   hooks, slash-command sync, shutdown
-│   ├── sessions.ts          # SessionManager: spawn pi, stream, killAll,
-│   │                        #   resetSession, getLoadedSkills
-│   ├── interaction-handler.ts # deferReply-first command router (base + skills)
-│   └── commands-def.ts      # buildApplicationCommands (base + skill commands)
+│   ├── sessions.ts          # SessionManager: spawn pi (with --thinking/--model/
+│   │                        #   --session args), stream, abortSession/killAll,
+│   │                        #   resetSession, per-channel overrides, listSessions,
+│   │                        #   listModels, getLoadedSkills
+│   ├── interaction-handler.ts # deferReply-first router for the 8 base commands
+│   │                        #   + skills; select-menu picker machinery
+│   │                        #   (handleSelectMenu, customId-keyed, 60 s expiry)
+│   └── commands-def.ts      # buildApplicationCommands (8 base + skill commands)
 ├── tests/
 │   ├── gateway.test.ts      # offline integration: real bin/picord.js vs the mock
-│   ├── sessions.test.ts     # SessionManager unit tests (hermetic, no real pi)
+│   │                        #   (13 tests: connect, sync, stream, all 8 commands
+│   │                        #   incl. picker flows + /stop, no presence, thread
+│   │                        #   hooks, SIGTERM)
+│   ├── sessions.test.ts     # SessionManager unit tests (hermetic, no real pi;
+│   │                        #   9 tests incl. argv/overrides, listSessions,
+│   │                        #   listModels, abortSession)
 │   ├── live.test.ts         # opt-in real-Discord login test (skips w/o token)
 │   └── mock/
 │       ├── discord-mock.ts  # in-process REST+WS Discord mock (injectable
-│       │                    #   THREAD_UPDATE / THREAD_DELETE dispatches)
-│       └── fake-pi.sh       # scripted fake pi (exercises the edit throttle)
+│       │                    #   THREAD_UPDATE / THREAD_DELETE, DMs, chat-input
+│       │                    #   interactions, select-menu clicks)
+│       └── fake-pi.sh       # scripted fake pi: edit-throttle chunks,
+│                            #   --list-models table, stop-probe-slow mode,
+│                            #   argv logging via FAKE_PI_ARGS_FILE
 ├── dist/                    # tsc output (committed)
 ├── package.json             # name: picord, bin: picord, main: dist/index.js
 ├── jest.config.js           # ts-jest; tests/**/*.test.ts
@@ -95,9 +116,13 @@ reviewer knows the boundaries.
 3. **No `prepare`/postinstall build hook.** `dist/` is committed pre-built; a fresh
    clone runs without building, but source changes require `npm run build` before
    the new behavior is live.
-4. **Live login test not yet run with the Crash token.** `tests/live.test.ts`
-   compiles and self-skips; the real-READY assertion needs `DISCORD_TOKEN`
-   in `v2/.env` (then `npm run test:live`).
+4. **Overrides are in-memory.** Thinking/model/session overrides live in the bot
+   process and reset on restart (accepted design — pi's own defaults win after a
+   restart). Session *files* and pi's session store persist regardless.
+5. **`/resume` picker is capped at 25 sessions** (Discord's option limit) — older
+   sessions can still be attached via `/resume <id>`.
+6. **Picker menus expire in 60 s** with no re-arm; re-running the command gives a
+   fresh menu.
 
 ---
 
@@ -132,6 +157,21 @@ Also added for observability (mock only): full REST request logging
 (`[rest] METHOD path`) and gateway event logging (`CREATE` / `EDIT` / `COMMANDS` /
 `INTERACT-CALLBACK` / `WEBHOOK-EDIT` / `PRESENCE`), plus a `[gw-recv]` raw-packet log.
 
+**2026-10-13 (b) — while building the command set:**
+
+*Product bug found & fixed:* the interaction router keyed per-channel overrides by
+`interaction.channelId`, but DM *messages* are routed under the shared `'dm'` session
+key — so a picker pick in a DM would never apply to the next DM run. Fixed in
+`src/interaction-handler.ts`: `sessionKey = interaction.guildId ? channelId : 'dm'`
+(guildId is null for DM interactions, so no channel cache is needed). Regression-
+covered by the picker gateway tests (menu → pick → next DM run's argv).
+
+| # | Error (symptom) | Root cause (in the mock) | Fix |
+|---|-----------------|--------------------------|-----|
+| 7 | Select-menu clicks silently ignored | current discord-api-types enum: `InteractionType.MessageComponent === 3` (not 4) — the mock dispatched the click as an *autocomplete* interaction, which the gateway ignores by design | dispatch type 3; comment added |
+| 8 | (same) interaction never constructed | component interactions carry the attached `message` as a **top-level** payload member (sibling of `data`), and `channel` as an **object** (`data.channel?.id` is what discord.js 14.27 reads) | `injectSelectMenu`/`injectInteraction` send the current shape |
+| 9 | Second DM in a session never answered | `newId()` used `900000000000000000 + n` — past `Number.MAX_SAFE_INTEGER`, so **every** id collapsed to the same string; the DM collided with a cached bot message and discord.js re-emitted that (bot-authored) message, which the gateway ignores | BigInt id arithmetic |
+
 ---
 
 ## ⏭️ What's Next (proposed, not started)
@@ -147,15 +187,39 @@ Also added for observability (mock only): full REST request logging
 
 ---
 
+## Commands
+
+The 8 base commands (all in the bot's slash menu; DMs, threads, and guild channels):
+
+| Command | Behavior |
+|---------|----------|
+| `/new` | Fresh session for this channel: deletes its saved session file(s) and detaches any attached session (`/clear` is the same action, same confirmation text style) |
+| `/stop` | Aborts every live pi run for this channel (the Esc equivalent) — partial output is kept, the message gets a `⏱ *stopped*` marker |
+| `/thinking [level]` | Optional arg sets the level directly (`off`…`xhigh`, `max`); omitted → select menu. Applies from the next message; in-memory (reset on bot restart) |
+| `/model [pattern]` | Optional arg sets a model pattern directly; omitted → select menu built from `pi --list-models` (5-min cache). In-memory |
+| `/resume [id]` | Optional arg attaches an existing pi session by id; omitted → select menu of the 25 newest saved sessions, labelled by their first user message. The next message continues that conversation (`pi --session <id>`) |
+| `/status` | Pi workspace, in-flight runs, **this channel's overrides** (thinking/model/session), and loaded skills |
+| `/help` | This command list, in Discord |
+| `/clear` | Alias of `/new` (original confirmation wording kept) |
+
+Picker semantics (all three pickers): native Discord select menu, 60 s expiry with
+an annotated expired message, ephemeral confirmation on pick, 25-option cap,
+unique `customId` per menu (no message-cache dependency), routed by the gateway's
+`interactionCreate` handler (`handleSelectMenu`). Skill commands run through the
+same per-channel session and therefore honour the active overrides.
+
 ## Test suite
 
 ```bash
 cd /home/local/projects/picord/v2
 npm install          # if node_modules is absent
 npm run build        # rebuild dist/ from src/ (gateway.test.ts runs the committed dist)
-npm test             # offline: 12 tests (gateway + sessions); live test self-skips
+npm test             # offline: 22 tests (13 gateway + 9 sessions); live test self-skips
 npm run test:live    # real Discord login test (needs DISCORD_TOKEN in v2/.env)
 ```
+
+Set `DUMP_BOT_LOGS=1` to print the captured bot log after a gateway-suite run
+(useful when extending the mock).
 
 ## How to run
 
