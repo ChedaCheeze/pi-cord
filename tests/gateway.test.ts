@@ -1,5 +1,5 @@
 /**
- * Offline integration test: boots the REAL launcher (bin/picord.js ->
+ * Offline integration test: boots the REAL launcher (bin/pi-cord.js ->
  * dist/index.js) against the in-process Discord mock and asserts the full
  * verified loop — connect, command sync (base + skill), streamed DM reply
  * with the 75-char edit throttle, /status defer + editReply, no-presence,
@@ -15,7 +15,7 @@ import * as path from 'path';
 import { DiscordMock, DM_CHANNEL_ID, MOCK_TOKEN, THREAD_ID } from './mock/discord-mock';
 
 const ROOT = path.resolve(__dirname, '..');
-const BIN = path.join(ROOT, 'bin', 'picord.js');
+const BIN = path.join(ROOT, 'bin', 'pi-cord.js');
 const FAKE_PI = path.join(ROOT, 'tests', 'mock', 'fake-pi.sh');
 
 // Must stay in sync with tests/mock/fake-pi.sh (one streamed line per chunk).
@@ -38,7 +38,7 @@ async function waitFor(cond: () => boolean, timeoutMs = 30_000, label = 'conditi
   }
 }
 
-describe('picord v2 gateway (offline, mocked Discord)', () => {
+describe('pi-cord gateway (offline, mocked Discord)', () => {
   let mock: DiscordMock;
   let apiBase: string;
   let child: ChildProcess;
@@ -184,7 +184,7 @@ describe('picord v2 gateway (offline, mocked Discord)', () => {
     // discord-api-types enum, DeferredChannelMessageWithSource === 5.
     await waitFor(() => snap().callbackTypes.includes(5), 15_000, 'deferred acknowledgement (type 5)');
     await waitFor(
-      () => snap().editReplyBodies.some((b) => b.includes('picord v2 status') && b.includes('myskill')),
+      () => snap().editReplyBodies.some((b) => b.includes('pi-cord status') && b.includes('myskill')),
       15_000,
       'editReply with status body',
     );

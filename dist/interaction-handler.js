@@ -4,7 +4,7 @@ exports.handleSelectMenu = handleSelectMenu;
 exports.handleInteraction = handleInteraction;
 exports.ackNonCommand = ackNonCommand;
 /**
- * Synchronous slash-command router for picord v2.
+ * Synchronous slash-command router for pi-cord.
  *
  * Rule 1 (spec): the first line of handleInteraction is
  *   await interaction.deferReply({ ephemeral: false });
@@ -32,7 +32,7 @@ const LOG_GREEN = '\u001b[32m';
 const LOG_RED = '\u001b[31m';
 const LOG_RESET = '\u001b[0m';
 function logError(msg) {
-    console.error(`${LOG_RED}[picord] ${msg}${LOG_RESET}`);
+    console.error(`${LOG_RED}[pi-cord] ${msg}${LOG_RESET}`);
 }
 function clip(text) {
     return text.length > DISCORD_LIMIT - 1 ? `${text.slice(0, DISCORD_LIMIT - 1)}\u2026` : text;
@@ -63,7 +63,7 @@ async function presentPicker(interaction, intro, options, onPick) {
         await interaction.editReply({ content: clip(`${intro}\n\n\u26a0\ufe0f No options available right now.`) });
         return;
     }
-    const customId = `picord-${interaction.commandName}-${Math.random().toString(36).slice(2, 10)}`;
+    const customId = `pi-cord-${interaction.commandName}-${Math.random().toString(36).slice(2, 10)}`;
     const menu = new discord_js_1.StringSelectMenuBuilder()
         .setCustomId(customId)
         .setPlaceholder('Pick one\u2026')
@@ -88,7 +88,7 @@ async function presentPicker(interaction, intro, options, onPick) {
  * caller's customId is not ours).
  */
 async function handleSelectMenu(interaction) {
-    if (!interaction.customId.startsWith('picord-'))
+    if (!interaction.customId.startsWith('pi-cord-'))
         return;
     const entry = pendingPickers.get(interaction.customId);
     if (!entry) {
@@ -158,7 +158,7 @@ async function handleInteraction(interaction, sessions) {
                 const model = sessions.modelFor(sessionKey);
                 const attached = sessions.attachedFor(sessionKey);
                 await interaction.editReply({
-                    content: clip(`\u2139\ufe0f **picord v2 status**\n` +
+                    content: clip(`\u2139\ufe0f **pi-cord status**\n` +
                         `Pi workspace: \`${sessions.workingDirectory}\`\n` +
                         `Pi runs in flight: ${sessions.runningCount}\n\n` +
                         `**This channel**\n` +
@@ -182,7 +182,7 @@ async function handleInteraction(interaction, sessions) {
                         ? `\u2705 Session memory for this channel cleared (${deleted} file(s) deleted).`
                         : `\u2705 New session started for this channel (${deleted} saved file(s) deleted).`,
                 });
-                console.log(`${LOG_GREEN}[picord] /${name} channel=${ch} deleted=${deleted}${LOG_RESET}`);
+                console.log(`${LOG_GREEN}[pi-cord] /${name} channel=${ch} deleted=${deleted}${LOG_RESET}`);
                 return;
             }
             case 'stop': {
@@ -192,7 +192,7 @@ async function handleInteraction(interaction, sessions) {
                         ? `\u23f1 Stopped ${n} pi run(s) in this channel.`
                         : '\u23f1 Nothing is running in this channel right now.',
                 });
-                console.log(`${LOG_GREEN}[picord] /stop channel=${sessionKey} aborted=${n}${LOG_RESET}`);
+                console.log(`${LOG_GREEN}[pi-cord] /stop channel=${sessionKey} aborted=${n}${LOG_RESET}`);
                 return;
             }
             case 'thinking': {
@@ -262,7 +262,7 @@ async function handleInteraction(interaction, sessions) {
             }
             case 'help': {
                 await interaction.editReply({
-                    content: clip('**picord v2 commands**\n' +
+                    content: clip('**pi-cord commands**\n' +
                         '\u2022 `/new` — fresh session for this channel (\`/clear\` = same)\n' +
                         '\u2022 `/stop` — abort the live pi run (Esc)\n' +
                         '\u2022 `/thinking [level]` — show/set thinking level (menu when omitted)\n' +

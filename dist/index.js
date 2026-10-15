@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.startGateway = startGateway;
 /**
- * picord v2 — standalone Discord gateway for Pi agents.
+ * pi-cord — standalone Discord gateway for Pi agents.
  *
  * One pi --print session per Discord channel/thread. Boots a discord.js
  * Client, registers slash commands (base + skills) with Discord's
@@ -19,7 +19,7 @@ const GREEN = '\u001b[32m';
 const YELLOW = '\u001b[33m';
 const RED = '\u001b[31m';
 const RESET = '\u001b[0m';
-const TAG = '[picord]';
+const TAG = '[pi-cord]';
 function logInfo(msg) {
     console.log(`${GREEN}${TAG} ${msg}${RESET}`);
 }
@@ -88,7 +88,7 @@ function clipAt(total, limit) {
 async function startGateway() {
     const token = process.env.DISCORD_TOKEN;
     if (!token) {
-        logError('DISCORD_TOKEN is not set. Re-run `picord` to trigger the setup wizard.');
+        logError('DISCORD_TOKEN is not set. Re-run `pi-cord` to trigger the setup wizard.');
         process.exit(1);
     }
     const sessions = new sessions_1.SessionManager();
@@ -253,7 +253,7 @@ async function startGateway() {
     });
     await client.login(token);
 }
-// Boot on module load. The CLI launcher (bin/picord.js) `require`s this
+// Boot on module load. The CLI launcher (bin/pi-cord.js) `require`s this
 // file after resolving the token, so the gateway must start at require
 // time — not only when run directly (require.main !== module then).
 startGateway().catch((err) => {

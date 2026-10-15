@@ -1,5 +1,5 @@
 /**
- * Synchronous slash-command router for picord v2.
+ * Synchronous slash-command router for pi-cord.
  *
  * Rule 1 (spec): the first line of handleInteraction is
  *   await interaction.deferReply({ ephemeral: false });

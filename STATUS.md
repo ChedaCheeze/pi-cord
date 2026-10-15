@@ -1,5 +1,10 @@
-# picord v2 — Status
+# pi-cord — Status
 
+> Renamed **picord v2 → pi-cord** on **2026-10-15**: this is now the single, current
+> pi-cord project (old v1 deleted), at `~/projects/pi-cord`, repo
+> `git@github.com:ChedaCheeze/pi-cord.git`. History below keeps its original
+> "picord v2" wording where it records past events.
+>
 > Exact state as of **2026-07-09**, updated **2026-10-13 (b)**: automated test suite added,
 > `Thinking...` streaming bug fixed, `verify-sessions.js` promoted into jest, live login test
 > passed with the Crash token, **v2 deployed as the live systemd service (v1 retired)**, presence
@@ -7,10 +12,10 @@
 > pickers** implemented (stop / new / thinking / model / resume / help / status / clear).
 > Read order: **Done → Missing → Errors (found & fixed) → What's Next**.
 
-## What picord v2 is
+## What pi-cord is
 
 A standalone, production-ready Discord Gateway for the Pi Agent. It is installed
-as a global Node.js binary (`picord`) that:
+as a global Node.js binary (`pi-cord`) that:
 
 1. Manages its own Discord WebSocket (discord.js v14).
 2. Spawns local `pi --print --session-id <channel_id>` child processes to do the
@@ -63,8 +68,8 @@ gateway event; assertions below are from that log.
 
 ### Project layout
 ```
-v2/
-├── bin/picord.js            # CLI launcher: .env load, PICORD_BOT_TOKEN mapping,
+pi-cord/
+├── bin/pi-cord.js           # CLI launcher: .env load, PICORD_BOT_TOKEN mapping,
 │                            #   interactive wizard, then requires dist/index.js
 ├── src/
 │   ├── index.ts             # gateway: client, intents, streaming reply, thread
@@ -110,9 +115,9 @@ reviewer knows the boundaries.
 
 1. **No `--help` / `--version` / CLI flags.** `bin/picord.js` has no flag parsing;
    any invocation without a token goes straight into the wizard. (Not a spec item.)
-2. **No `.gitignore` inside `v2/`.** `v2/` inherits the parent `picord` repo's
-   `.gitignore`. `dist/` is intentionally **committed** (matches the parent's
-   convention). `node_modules/` and `.env` are ignored by the parent.
+2. **`dist/` is intentionally committed.** A fresh clone runs without building;
+   after editing `src/`, run `npm run build` and commit the rebuilt `dist/`.
+   (`node_modules/` and `.env` are gitignored in-repo.)
 3. **No `prepare`/postinstall build hook.** `dist/` is committed pre-built; a fresh
    clone runs without building, but source changes require `npm run build` before
    the new behavior is live.
@@ -211,11 +216,11 @@ same per-channel session and therefore honour the active overrides.
 ## Test suite
 
 ```bash
-cd /home/local/projects/picord/v2
+cd /home/local/projects/pi-cord
 npm install          # if node_modules is absent
 npm run build        # rebuild dist/ from src/ (gateway.test.ts runs the committed dist)
-npm test             # offline: 22 tests (13 gateway + 9 sessions); live test self-skips
-npm run test:live    # real Discord login test (needs DISCORD_TOKEN in v2/.env)
+npm test             # offline: 23 tests (13 gateway + 9 sessions + 1 live, self-skips w/o token)
+npm run test:live    # real Discord login test (needs DISCORD_TOKEN in .env)
 ```
 
 Set `DUMP_BOT_LOGS=1` to print the captured bot log after a gateway-suite run
@@ -224,18 +229,18 @@ Set `DUMP_BOT_LOGS=1` to print the captured bot log after a gateway-suite run
 ## How to run
 
 ```bash
-cd /home/local/projects/picord/v2
+cd /home/local/projects/pi-cord
 npm install          # if node_modules is absent
 npm run build        # rebuild dist/ from src/
 
-# Foreground (real token): the token comes from v2/.env
-picord                       # wizard if no token, else boot
+# Foreground (real token): the token comes from .env
+pi-cord                      # wizard if no token, else boot
 
 # Production (this machine): user systemd service
-systemctl --user status  picord        # active (running) as Crash#1198
-systemctl --user restart picord        # after `npm run build`
-systemctl --user stop|disable picord   # full teardown
-journalctl --user -u picord -f         # follow logs
+systemctl --user status  pi-cord       # active (running) as Crash#1198
+systemctl --user restart pi-cord       # after `npm run build`
+systemctl --user stop|disable pi-cord  # full teardown
+journalctl --user -u pi-cord -f        # follow logs
 ```
 
 The offline integration check no longer needs a manual harness — `npm test`

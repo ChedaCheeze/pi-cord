@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * picord v2 — global CLI launcher.
+ * pi-cord — global CLI launcher.
  *
  * 1. Loads .env from the project directory (dotenv), mapping
  *    PICORD_BOT_TOKEN to DISCORD_TOKEN if present.
@@ -35,7 +35,7 @@ function writeTokenToEnv(token) {
     }
     if (hadToken) lines.push(`DISCORD_TOKEN="${token}"`);
   } else {
-    lines.push('# picord v2 configuration');
+    lines.push('# pi-cord configuration');
     lines.push(`DISCORD_TOKEN="${token}"`);
   }
   fs.writeFileSync(envPath, lines.join('\n') + '\n', { mode: 0o600 });
@@ -61,7 +61,7 @@ if (process.env.DISCORD_TOKEN) {
   boot();
 } else {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  rl.question('Welcome to Picord! Please paste your Discord Bot Token: ', (answer) => {
+  rl.question('Welcome to pi-cord! Please paste your Discord Bot Token: ', (answer) => {
     rl.close();
     const token = answer.trim();
     if (!token) {

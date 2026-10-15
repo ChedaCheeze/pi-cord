@@ -1,5 +1,5 @@
 /**
- * Discord slash-command schema for picord v2.
+ * Discord slash-command schema for pi-cord.
  *
  * Base commands are built with SlashCommandBuilder;
  * buildApplicationCommands(skills) additionally turns every loaded Pi skill

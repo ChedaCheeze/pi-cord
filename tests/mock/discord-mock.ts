@@ -1,5 +1,5 @@
 /**
- * Minimal in-process Discord gateway + REST mock for picord v2 integration
+ * Minimal in-process Discord gateway + REST mock for pi-cord integration
  * tests. Emulates just enough of Discord for discord.js to:
  *
  *   1. GET /gateway/bot -> a ws:// URL on this same server,

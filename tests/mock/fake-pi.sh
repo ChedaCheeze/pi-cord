@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fake `pi` for picord v2 integration testing.
+# Fake `pi` for pi-cord integration testing.
 #
 # Modes:
 #   --list-models   prints a parseable fake model table (for the /model picker)

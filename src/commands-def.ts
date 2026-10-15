@@ -1,5 +1,5 @@
 /**
- * Discord slash-command schema for picord v2.
+ * Discord slash-command schema for pi-cord.
  *
  * Base commands are built with SlashCommandBuilder;
  * buildApplicationCommands(skills) additionally turns every loaded Pi skill
@@ -17,7 +17,7 @@ import { THINKING_LEVELS, type SkillInfo } from './sessions';
 const NAME_RE = /^[a-z0-9_-]{1,32}$/;
 const DESC_RE = /^.{1,100}$/;
 
-/** Base commands every picord v2 instance registers (as API JSON). */
+/** Base commands every pi-cord instance registers (as API JSON). */
 function baseCommands(): CommandJSON[] {
   return [
     new SlashCommandBuilder()
@@ -64,7 +64,7 @@ function baseCommands(): CommandJSON[] {
         opt.setName('id').setDescription('Session id or unique prefix (optional — omitted shows a picker)').setRequired(false),
       )
       .toJSON(),
-    new SlashCommandBuilder().setName('help').setDescription('List the picord commands').toJSON(),
+    new SlashCommandBuilder().setName('help').setDescription('List the pi-cord commands').toJSON(),
   ];
 }
 

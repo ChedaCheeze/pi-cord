@@ -65,7 +65,7 @@ describe('SessionManager', () => {
     fs.mkdirSync(path.join(skillsDir, 'test-skill'), { recursive: true });
     fs.writeFileSync(
       path.join(skillsDir, 'test-skill', 'SKILL.md'),
-      '---\nname: test-skill\ndescription: A verification skill for picord v2.\n---\n\n# Test skill\n',
+      '---\nname: test-skill\ndescription: A verification skill for pi-cord.\n---\n\n# Test skill\n',
     );
     fs.mkdirSync(path.join(skillsDir, 'no-desc-skill'), { recursive: true });
     fs.writeFileSync(
@@ -147,7 +147,7 @@ describe('SessionManager', () => {
     const skills = mgr.getLoadedSkills();
     const byName = Object.fromEntries(skills.map((s) => [s.name, s]));
     expect(skills).toHaveLength(2);
-    expect(byName['test-skill']?.description).toBe('A verification skill for picord v2.');
+    expect(byName['test-skill']?.description).toBe('A verification skill for pi-cord.');
     expect(byName['no-desc-skill']?.description).toBe('');
     expect(byName['test-skill']?.path).toBe(path.join(skillsDir, 'test-skill', 'SKILL.md'));
   });

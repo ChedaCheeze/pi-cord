@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.skillCommands = skillCommands;
 exports.buildApplicationCommands = buildApplicationCommands;
 /**
- * Discord slash-command schema for picord v2.
+ * Discord slash-command schema for pi-cord.
  *
  * Base commands are built with SlashCommandBuilder;
  * buildApplicationCommands(skills) additionally turns every loaded Pi skill
@@ -19,7 +19,7 @@ const discord_js_1 = require("discord.js");
 const sessions_1 = require("./sessions");
 const NAME_RE = /^[a-z0-9_-]{1,32}$/;
 const DESC_RE = /^.{1,100}$/;
-/** Base commands every picord v2 instance registers (as API JSON). */
+/** Base commands every pi-cord instance registers (as API JSON). */
 function baseCommands() {
     return [
         new discord_js_1.SlashCommandBuilder()
@@ -60,7 +60,7 @@ function baseCommands() {
             .setDescription('Attach an existing pi session to this channel (menu when omitted)')
             .addStringOption((opt) => opt.setName('id').setDescription('Session id or unique prefix (optional — omitted shows a picker)').setRequired(false))
             .toJSON(),
-        new discord_js_1.SlashCommandBuilder().setName('help').setDescription('List the picord commands').toJSON(),
+        new discord_js_1.SlashCommandBuilder().setName('help').setDescription('List the pi-cord commands').toJSON(),
     ];
 }
 function skillCommands(skills) {
